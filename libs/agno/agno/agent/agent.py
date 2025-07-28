@@ -190,6 +190,9 @@ class Agent:
 
     # A function that acts as middleware and is called around tool calls.
     tool_hooks: Optional[List[Callable]] = None
+    
+    # Execution mode for async tools: "serial" (one at a time) or "parallel" (concurrent execution)
+    async_tool_execution_mode: Literal["serial", "parallel"] = "serial"
 
     # --- Agent Reasoning ---
     # Enable reasoning by working through the problem step by step.
@@ -379,6 +382,7 @@ class Agent:
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
+        async_tool_execution_mode: Literal["serial", "parallel"] = "serial",
         reasoning: bool = False,
         reasoning_model: Optional[Model] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -476,6 +480,7 @@ class Agent:
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
+        self.async_tool_execution_mode = async_tool_execution_mode
 
         self.reasoning = reasoning
         self.reasoning_model = reasoning_model
@@ -2665,13 +2670,22 @@ class Agent:
 
     async def _ahandle_tool_call_updates(self, run_response: RunResponse, run_messages: RunMessages):
         self.model = cast(Model, self.model)
+        
+        # Collect tools that need parallel execution
+        tools_to_execute_in_parallel = []
+        
+        # First pass: handle non-executable tools and collect executable ones for parallel execution
         for _t in run_response.tools or []:
             # Case 1: Handle confirmed tools and execute them
             if _t.requires_confirmation is not None and _t.requires_confirmation is True and self._functions_for_model:
                 # Tool is confirmed and hasn't been run before
                 if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
-                    async for _ in self._arun_tool(run_messages, _t):
-                        pass
+                    if self.async_tool_execution_mode == "parallel":
+                        tools_to_execute_in_parallel.append(_t)
+                    else:
+                        # Serial execution (original behavior)
+                        async for _ in self._arun_tool(run_messages, _t):
+                            pass
                 else:
                     self._reject_tool_call(run_messages, _t)
                     _t.confirmed = False
@@ -2694,22 +2708,44 @@ class Agent:
             # Case 4: Handle user input required tools
             elif _t.requires_user_input is not None and _t.requires_user_input is True:
                 self._handle_user_input_update(tool=_t)
-                async for _ in self._arun_tool(run_messages, _t):
-                    pass
+                if self.async_tool_execution_mode == "parallel":
+                    tools_to_execute_in_parallel.append(_t)
+                else:
+                    # Serial execution (original behavior)
+                    async for _ in self._arun_tool(run_messages, _t):
+                        pass
                 _t.requires_user_input = False
                 _t.answered = True
+        
+        # Execute tools in parallel if needed
+        if tools_to_execute_in_parallel and self.async_tool_execution_mode == "parallel":
+            async def run_tool_async(tool):
+                async for _ in self._arun_tool(run_messages, tool):
+                    pass
+            
+            # Execute all tools concurrently
+            await asyncio.gather(*[run_tool_async(tool) for tool in tools_to_execute_in_parallel])
 
     async def _ahandle_tool_call_updates_stream(
         self, run_response: RunResponse, run_messages: RunMessages
     ) -> AsyncIterator[RunResponseEvent]:
         self.model = cast(Model, self.model)
+        
+        # Collect tools that need parallel execution
+        tools_to_execute_in_parallel = []
+        
+        # First pass: handle non-executable tools and collect executable ones for parallel execution
         for _t in run_response.tools or []:
             # Case 1: Handle confirmed tools and execute them
             if _t.requires_confirmation is not None and _t.requires_confirmation is True and self._functions_for_model:
                 # Tool is confirmed and hasn't been run before
                 if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
-                    async for event in self._arun_tool(run_messages, _t):
-                        yield event
+                    if self.async_tool_execution_mode == "parallel":
+                        tools_to_execute_in_parallel.append(_t)
+                    else:
+                        # Serial execution (original behavior)
+                        async for event in self._arun_tool(run_messages, _t):
+                            yield event
                 else:
                     self._reject_tool_call(run_messages, _t)
                     _t.confirmed = False
@@ -2729,13 +2765,34 @@ class Agent:
                 self._handle_get_user_input_tool_update(run_messages=run_messages, tool=_t)
                 _t.requires_user_input = False
                 _t.answered = True
-            # # Case 4: Handle user input required tools
+            # Case 4: Handle user input required tools
             elif _t.requires_user_input is not None and _t.requires_user_input is True:
                 self._handle_user_input_update(tool=_t)
-                async for event in self._arun_tool(run_messages, _t):
-                    yield event
+                if self.async_tool_execution_mode == "parallel":
+                    tools_to_execute_in_parallel.append(_t)
+                else:
+                    # Serial execution (original behavior)
+                    async for event in self._arun_tool(run_messages, _t):
+                        yield event
                 _t.requires_user_input = False
                 _t.answered = True
+        
+        # Execute tools in parallel if needed
+        if tools_to_execute_in_parallel and self.async_tool_execution_mode == "parallel":
+            async def collect_tool_events(tool):
+                events = []
+                async for event in self._arun_tool(run_messages, tool):
+                    events.append(event)
+                return events
+            
+            # Execute all tools concurrently and collect their events
+            tool_event_lists = await asyncio.gather(*[collect_tool_events(tool) for tool in tools_to_execute_in_parallel])
+            
+            # Yield all events from parallel execution
+            # Note: In parallel mode, events from different tools may be interleaved differently than serial mode
+            for event_list in tool_event_lists:
+                for event in event_list:
+                    yield event
 
     def _update_run_response(self, model_response: ModelResponse, run_response: RunResponse, run_messages: RunMessages):
         # Format tool calls if they exist
