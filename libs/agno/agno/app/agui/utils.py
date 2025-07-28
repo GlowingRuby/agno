@@ -37,16 +37,18 @@ class EventBuffer:
     blocking_tool_call_id: Optional[str]  # The tool call that's currently blocking the buffer
     active_tool_call_ids: Set[str]  # All currently active tool calls
     ended_tool_call_ids: Set[str]  # All tool calls that have ended
+    is_flushing: bool  # Whether we're currently flushing the buffer
 
     def __init__(self):
         self.buffer = deque()
         self.blocking_tool_call_id = None
         self.active_tool_call_ids = set()
         self.ended_tool_call_ids = set()
+        self.is_flushing = False
 
     def is_blocked(self) -> bool:
         """Check if the buffer is currently blocked by an active tool call."""
-        return self.blocking_tool_call_id is not None
+        return self.blocking_tool_call_id is not None and not self.is_flushing
 
     def start_tool_call(self, tool_call_id: str) -> None:
         """Start a new tool call, marking it the current blocking tool call if needed."""
@@ -286,11 +288,13 @@ def _emit_event_logic(event: BaseEvent, event_buffer: EventBuffer) -> List[BaseE
                 events_to_emit.append(event)
                 event_buffer.end_tool_call(tool_call_id)
                 # Flush buffered events after ending the blocking tool call
+                event_buffer.is_flushing = True
                 while event_buffer.buffer:
                     buffered_event = event_buffer.buffer.popleft()
                     # Recursively process buffered events
                     nested_events = _emit_event_logic(buffered_event, event_buffer)
                     events_to_emit.extend(nested_events)
+                event_buffer.is_flushing = False
             elif tool_call_id and tool_call_id in event_buffer.active_tool_call_ids:
                 event_buffer.buffer.append(event)
                 event_buffer.end_tool_call(tool_call_id)
