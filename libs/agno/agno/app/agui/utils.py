@@ -292,7 +292,8 @@ def _emit_event_logic(event: BaseEvent, event_buffer: EventBuffer) -> List[BaseE
                     nested_events = _emit_event_logic(buffered_event, event_buffer)
                     events_to_emit.extend(nested_events)
             elif tool_call_id and tool_call_id in event_buffer.active_tool_call_ids:
-                event_buffer.buffer.append(event)
+                # Allow non-blocking tool calls to emit their end events immediately
+                events_to_emit.append(event)
                 event_buffer.end_tool_call(tool_call_id)
             else:
                 event_buffer.buffer.append(event)
