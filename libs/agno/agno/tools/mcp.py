@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_info, log_warning, logger
-from agno.utils.mcp import get_entrypoint_for_tool
+from agno.utils.mcp import get_entrypoint_for_tool, get_sync_entrypoint_for_tool
 
 try:
     from mcp import ClientSession, StdioServerParameters
@@ -454,3 +454,196 @@ class MultiMCPTools(Toolkit):
         except Exception as e:
             logger.error(f"Failed to get MCP tools: {e}")
             raise
+
+
+class SyncMCPTools(Toolkit):
+    """
+    A synchronous toolkit for integrating Model Context Protocol (MCP) servers with Agno agents.
+    This allows agents to access tools, resources, and prompts exposed by MCP servers without async/await.
+
+    This is a synchronous wrapper around the async MCPTools functionality.
+    """
+
+    def __init__(
+        self,
+        command: Optional[str] = None,
+        *,
+        url: Optional[str] = None,
+        env: Optional[dict[str, str]] = None,
+        transport: Literal["stdio", "sse", "streamable-http"] = "stdio",
+        server_params: Optional[Union[StdioServerParameters, SSEClientParams, StreamableHTTPClientParams]] = None,
+        timeout_seconds: int = 5,
+        include_tools: Optional[list[str]] = None,
+        exclude_tools: Optional[list[str]] = None,
+        **kwargs,
+    ):
+        """
+        Initialize the synchronous MCP toolkit.
+
+        Args:
+            command: The command to run to start the server. Should be used in conjunction with env.
+            url: The URL endpoint for SSE or Streamable HTTP connection when transport is "sse" or "streamable-http".
+            env: The environment variables to pass to the server. Should be used in conjunction with command.
+            server_params: Parameters for creating a new session
+            timeout_seconds: Read timeout in seconds for the MCP client
+            include_tools: Optional list of tool names to include (if None, includes all)
+            exclude_tools: Optional list of tool names to exclude (if None, excludes none)
+            transport: The transport protocol to use, either "stdio" or "sse" or "streamable-http"
+        """
+        super().__init__(name="SyncMCPTools", **kwargs)
+
+        # Validate parameters like MCPTools does  
+        if server_params is None:
+            if transport == "sse" and url is None:
+                raise ValueError("One of 'url' or 'server_params' parameters must be provided when using SSE transport")
+            if transport == "stdio" and command is None:
+                raise ValueError(
+                    "One of 'command' or 'server_params' parameters must be provided when using stdio transport"
+                )
+            if transport == "streamable-http" and url is None:
+                raise ValueError(
+                    "One of 'url' or 'server_params' parameters must be provided when using Streamable HTTP transport"
+                )
+
+        # Ensure the received server_params are valid for the given transport
+        if server_params is not None:
+            if transport == "sse":
+                if not isinstance(server_params, SSEClientParams):
+                    raise ValueError(
+                        "If using the SSE transport, server_params must be an instance of SSEClientParams."
+                    )
+            elif transport == "stdio":
+                if not isinstance(server_params, StdioServerParameters):
+                    raise ValueError(
+                        "If using the stdio transport, server_params must be an instance of StdioServerParameters."
+                    )
+            elif transport == "streamable-http":
+                if not isinstance(server_params, StreamableHTTPClientParams):
+                    raise ValueError(
+                        "If using the streamable-http transport, server_params must be an instance of StreamableHTTPClientParams."
+                    )
+
+        # Store the parameters to create the async MCPTools when needed
+        self._command = command
+        self._url = url
+        self._env = env
+        self._transport = transport
+        self._server_params = server_params
+        self._timeout_seconds = timeout_seconds
+        self._include_tools = include_tools
+        self._exclude_tools = exclude_tools
+        
+        # Set these after `__init__` to bypass the `_check_tools_filters`
+        # because tools are not available until `initialize()` is called.
+        self.include_tools = include_tools
+        self.exclude_tools = exclude_tools
+
+        # Validate command string like MCPTools does
+        if command is not None and transport not in ["sse", "streamable-http"]:
+            from shlex import split
+
+            parts = split(command)
+            if not parts:
+                raise ValueError("Empty command string")
+
+        self._async_mcp_tools: Optional[MCPTools] = None
+        self._initialized = False
+
+    def __enter__(self) -> "SyncMCPTools":
+        """Enter the sync context manager."""
+        self.initialize()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit the sync context manager."""
+        if self._async_mcp_tools is not None:
+            # Run the async exit in a new event loop
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                # If we're in an event loop, create a new one in a thread
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, self._async_exit(exc_type, exc_val, exc_tb))
+                    future.result()
+            except RuntimeError:
+                # No event loop running, we can use asyncio.run directly
+                asyncio.run(self._async_exit(exc_type, exc_val, exc_tb))
+            
+        self._async_mcp_tools = None
+        self._initialized = False
+
+    async def _async_exit(self, exc_type, exc_val, exc_tb):
+        """Helper to run the async exit."""
+        if self._async_mcp_tools is not None:
+            await self._async_mcp_tools.__aexit__(exc_type, exc_val, exc_tb)
+
+    def initialize(self) -> None:
+        """Initialize the synchronous MCP toolkit by getting available tools from the MCP server"""
+        if self._initialized:
+            return
+
+        try:
+            # Run the async initialization in a new event loop
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                # If we're in an event loop, create a new one in a thread
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, self._async_initialize())
+                    future.result()
+            except RuntimeError:
+                # No event loop running, we can use asyncio.run directly
+                asyncio.run(self._async_initialize())
+            
+            self._initialized = True
+        except Exception as e:
+            logger.error(f"Failed to initialize sync MCP tools: {e}")
+            raise
+
+    async def _async_initialize(self):
+        """Helper to run the async initialization."""
+        # Create and initialize the async MCPTools
+        self._async_mcp_tools = MCPTools(
+            command=self._command,
+            url=self._url,
+            env=self._env,
+            transport=self._transport,
+            server_params=self._server_params,
+            timeout_seconds=self._timeout_seconds,
+            include_tools=self._include_tools,
+            exclude_tools=self._exclude_tools,
+        )
+        
+        # Initialize it using the async context manager
+        await self._async_mcp_tools.__aenter__()
+        
+        # Copy the initialized tools but with sync entrypoints
+        for tool_name, async_function in self._async_mcp_tools.functions.items():
+            # Get the original tool from the MCP server
+            available_tools = await self._async_mcp_tools.session.list_tools()
+            mcp_tool = None
+            for tool in available_tools.tools:
+                if tool.name == tool_name:
+                    mcp_tool = tool
+                    break
+            
+            if mcp_tool is not None:
+                # Create a sync entrypoint for the tool
+                sync_entrypoint = get_sync_entrypoint_for_tool(mcp_tool, self._async_mcp_tools.session)
+                
+                # Create a Function with the sync entrypoint
+                sync_function = Function(
+                    name=tool_name,
+                    description=async_function.description,
+                    parameters=async_function.parameters,
+                    entrypoint=sync_entrypoint,
+                    skip_entrypoint_processing=True,
+                )
+                
+                # Register the sync Function with this toolkit
+                self.functions[sync_function.name] = sync_function
+                log_debug(f"Sync Function: {sync_function.name} registered with {self.name}")
+
+        log_debug(f"{self.name} initialized with {len(self.functions)} tools")
