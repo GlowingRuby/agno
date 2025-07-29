@@ -59,7 +59,7 @@ class MCPTools(Toolkit):
         transport: Literal["stdio", "sse", "streamable-http"] = "stdio",
         server_params: Optional[Union[StdioServerParameters, SSEClientParams, StreamableHTTPClientParams]] = None,
         session: Optional[ClientSession] = None,
-        timeout_seconds: int = 5,
+        timeout_seconds: int = 30,
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
@@ -239,7 +239,7 @@ class MCPTools(Toolkit):
             for tool in filtered_tools:
                 try:
                     # Get an entrypoint for the tool
-                    entrypoint = get_entrypoint_for_tool(tool, self.session)
+                    entrypoint = get_entrypoint_for_tool(tool, self.session, timeout_seconds=self.timeout_seconds)
                     # Create a Function for the tool
                     f = Function(
                         name=tool.name,
@@ -284,7 +284,7 @@ class MultiMCPTools(Toolkit):
         server_params_list: Optional[
             List[Union[SSEClientParams, StdioServerParameters, StreamableHTTPClientParams]]
         ] = None,
-        timeout_seconds: int = 5,
+        timeout_seconds: int = 30,
         client=None,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
@@ -431,7 +431,7 @@ class MultiMCPTools(Toolkit):
             for tool in filtered_tools:
                 try:
                     # Get an entrypoint for the tool
-                    entrypoint = get_entrypoint_for_tool(tool, session)
+                    entrypoint = get_entrypoint_for_tool(tool, session, timeout_seconds=self.timeout_seconds)
 
                     # Create a Function for the tool
                     f = Function(
@@ -472,7 +472,7 @@ class SyncMCPTools(Toolkit):
         env: Optional[dict[str, str]] = None,
         transport: Literal["stdio", "sse", "streamable-http"] = "stdio",
         server_params: Optional[Union[StdioServerParameters, SSEClientParams, StreamableHTTPClientParams]] = None,
-        timeout_seconds: int = 5,
+        timeout_seconds: int = 30,
         include_tools: Optional[list[str]] = None,
         exclude_tools: Optional[list[str]] = None,
         **kwargs,
@@ -631,7 +631,11 @@ class SyncMCPTools(Toolkit):
             
             if mcp_tool is not None:
                 # Create a sync entrypoint for the tool
-                sync_entrypoint = get_sync_entrypoint_for_tool(mcp_tool, self._async_mcp_tools.session)
+                sync_entrypoint = get_sync_entrypoint_for_tool(
+                    mcp_tool, 
+                    self._async_mcp_tools.session, 
+                    timeout_seconds=self._timeout_seconds
+                )
                 
                 # Create a Function with the sync entrypoint
                 sync_function = Function(
