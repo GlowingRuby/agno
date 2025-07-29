@@ -431,9 +431,22 @@ class Model(ABC):
         functions: Optional[Dict[str, Function]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
+        tools_concurrent: bool = True,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
+        
+        Args:
+            messages: List of messages to process
+            response_format: Optional response format specification
+            tools: Optional list of available tools
+            functions: Optional dictionary of functions
+            tool_choice: Optional tool choice specification
+            tool_call_limit: Optional limit on number of tool calls
+            tools_concurrent: Whether to execute tools concurrently (True) or serially (False). Defaults to True.
+        
+        Returns:
+            ModelResponse: The generated response
         """
 
         log_debug(f"{self.get_provider()} Async Response Start", center=True, symbol="-")
@@ -478,6 +491,7 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    tools_concurrent=tools_concurrent,
                 ):
                     if isinstance(function_call_response, ModelResponse):
                         if (
@@ -890,9 +904,23 @@ class Model(ABC):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
+        tools_concurrent: bool = True,
     ) -> AsyncIterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
         """
         Generate an asynchronous streaming response from the model.
+        
+        Args:
+            messages: List of messages to process
+            response_format: Optional response format specification
+            tools: Optional list of available tools
+            functions: Optional dictionary of functions
+            tool_choice: Optional tool choice specification
+            tool_call_limit: Optional limit on number of tool calls
+            stream_model_response: Whether to stream the model response
+            tools_concurrent: Whether to execute tools concurrently (True) or serially (False). Defaults to True.
+        
+        Returns:
+            AsyncIterator: Iterator yielding model responses and events
         """
 
         log_debug(f"{self.get_provider()} Async Response Stream Start", center=True, symbol="-")
@@ -961,6 +989,7 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    tools_concurrent=tools_concurrent,
                 ):
                     yield function_call_response
 
@@ -1408,6 +1437,7 @@ class Model(ABC):
         current_function_call_count: int = 0,
         function_call_limit: Optional[int] = None,
         skip_pause_check: bool = False,
+        tools_concurrent: bool = True,
     ) -> AsyncIterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
         # Additional messages from function calls that will be added to the function call results
         if additional_messages is None:
@@ -1532,11 +1562,23 @@ class Model(ABC):
                 )
             ]
 
-        results = await asyncio.gather(
-            *(self.arun_function_call(fc) for fc in function_calls_to_run), return_exceptions=True
-        )
+        # Execute function calls either concurrently or serially based on tools_concurrent flag
+        if tools_concurrent:
+            # Concurrent execution using asyncio.gather (original behavior)
+            results = await asyncio.gather(
+                *(self.arun_function_call(fc) for fc in function_calls_to_run), return_exceptions=True
+            )
+        else:
+            # Serial execution (one after another)
+            results = []
+            for fc in function_calls_to_run:
+                try:
+                    result = await self.arun_function_call(fc)
+                    results.append(result)
+                except Exception as e:
+                    results.append(e)
 
-        # Process results
+        # Process results (same logic for both concurrent and serial execution)
         for result in results:
             # If result is an exception, skip processing it
             if isinstance(result, BaseException):
