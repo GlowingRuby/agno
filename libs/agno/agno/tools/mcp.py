@@ -560,7 +560,7 @@ class SyncMCPTools(Toolkit):
             # Run the async exit in a new event loop
             import asyncio
             try:
-                loop = asyncio.get_running_loop()
+                asyncio.get_running_loop()
                 # If we're in an event loop, create a new one in a thread
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -587,7 +587,7 @@ class SyncMCPTools(Toolkit):
             # Run the async initialization in a new event loop
             import asyncio
             try:
-                loop = asyncio.get_running_loop()
+                asyncio.get_running_loop()
                 # If we're in an event loop, create a new one in a thread
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as executor:

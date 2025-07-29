@@ -104,3 +104,56 @@ def test_sync_mcp_empty_command_string():
         # Mock shlex.split to return an empty list
         with patch("shlex.split", return_value=[]):
             SyncMCPTools(command="")
+
+
+def test_sync_mcp_basic_instantiation():
+    """Test that SyncMCPTools can be instantiated with valid parameters."""
+    # Test with command
+    tools1 = SyncMCPTools(command="echo test")
+    assert tools1._command == "echo test"
+    assert tools1._transport == "stdio"
+    assert not tools1._initialized
+    
+    # Test with URL for streamable-http
+    tools2 = SyncMCPTools(url="http://localhost:8080", transport="streamable-http") 
+    assert tools2._url == "http://localhost:8080"
+    assert tools2._transport == "streamable-http"
+    
+    # Test with server_params
+    from mcp import StdioServerParameters
+    server_params = StdioServerParameters(command="test", args=[])
+    tools3 = SyncMCPTools(server_params=server_params)
+    assert tools3._server_params == server_params
+
+
+@patch("agno.tools.mcp.MCPTools")
+def test_sync_mcp_initialization_mocking(mock_mcp_tools_class):
+    """Test SyncMCPTools initialization with mocked async components."""
+    # Mock the async MCPTools instance
+    mock_mcp_instance = AsyncMock()
+    mock_mcp_instance.functions = {
+        "test_tool": AsyncMock(description="Test tool", parameters={"type": "object"})
+    }
+    mock_mcp_instance.session = AsyncMock()
+    
+    # Mock list_tools response
+    mock_tool = AsyncMock()
+    mock_tool.name = "test_tool"
+    mock_tool.description = "Test tool"
+    mock_tool.inputSchema = {"type": "object"}
+    
+    mock_tools_response = AsyncMock()
+    mock_tools_response.tools = [mock_tool]
+    mock_mcp_instance.session.list_tools.return_value = mock_tools_response
+    
+    # Set up the class mock
+    mock_mcp_tools_class.return_value = mock_mcp_instance
+    
+    # Test the sync tools
+    with patch("asyncio.run") as mock_asyncio_run:
+        tools = SyncMCPTools(command="echo test")
+        tools.initialize()
+        
+        # Verify asyncio.run was called (since no event loop is running in tests)
+        assert mock_asyncio_run.called
+        assert tools._initialized

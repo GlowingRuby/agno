@@ -80,3 +80,83 @@ You can modify these examples to:
 
 - Read more about [MCP](https://modelcontextprotocol.io/introduction)
 - Read about [Agno's MCP integration](https://docs.agno.com/tools/mcp)
+
+## New: Synchronous MCP Tools
+
+We've added `SyncMCPTools` - a synchronous wrapper around the existing async `MCPTools` that allows you to use MCP servers without `async`/`await`.
+
+### When to Use Each
+
+**Use `SyncMCPTools` when:**
+- You're working in a non-async codebase
+- You want simpler, more straightforward code
+- You're doing quick scripts or interactive sessions
+- You don't need concurrent operations
+
+**Use `MCPTools` when:**
+- You're in an async environment (web apps, etc.)
+- You need maximum performance
+- You're doing concurrent operations
+- You're already using async/await patterns
+
+### Basic Usage
+
+#### Synchronous (New)
+```python
+from agno.agent import Agent
+from agno.tools.mcp import SyncMCPTools
+from mcp import StdioServerParameters
+
+# Set up server
+server_params = StdioServerParameters(
+    command="npx",
+    args=["-y", "@modelcontextprotocol/server-filesystem", "/path/to/files"]
+)
+
+# Use sync context manager - no async/await needed!
+with SyncMCPTools(server_params=server_params) as mcp_tools:
+    agent = Agent(tools=[mcp_tools])
+    agent.print_response("List files in current directory")
+```
+
+#### Asynchronous (Original)
+```python
+from agno.agent import Agent  
+from agno.tools.mcp import MCPTools
+from mcp import StdioServerParameters
+
+async def main():
+    server_params = StdioServerParameters(
+        command="npx", 
+        args=["-y", "@modelcontextprotocol/server-filesystem", "/path/to/files"]
+    )
+    
+    # Use async context manager
+    async with MCPTools(server_params=server_params) as mcp_tools:
+        agent = Agent(tools=[mcp_tools])
+        await agent.aprint_response("List files in current directory")
+
+# Run with asyncio
+import asyncio
+asyncio.run(main())
+```
+
+### Sync Examples in this Directory
+
+- `sync_mcp_example.py` - Simple example using SyncMCPTools
+- `sync_vs_async_comparison.py` - Side-by-side comparison of both approaches
+
+### API Compatibility
+
+`SyncMCPTools` supports all the same parameters as `MCPTools`:
+
+- `command` - Command to start MCP server
+- `url` - URL for SSE/HTTP transport  
+- `transport` - Protocol ("stdio", "sse", "streamable-http")
+- `server_params` - Pre-configured server parameters
+- `timeout_seconds` - Timeout for operations
+- `include_tools`/`exclude_tools` - Filter available tools
+
+The only difference is the context manager pattern:
+- `SyncMCPTools`: `with SyncMCPTools() as tools:`
+- `MCPTools`: `async with MCPTools() as tools:`

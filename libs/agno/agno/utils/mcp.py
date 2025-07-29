@@ -86,7 +86,7 @@ def get_sync_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
             
             # Run the async call in the current event loop or create a new one
             try:
-                loop = asyncio.get_running_loop()
+                asyncio.get_running_loop()
                 # If we're in an event loop, we need to use asyncio.run_coroutine_threadsafe
                 # But for simplicity in this synchronous interface, we'll create a new thread
                 import concurrent.futures
