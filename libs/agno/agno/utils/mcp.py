@@ -22,20 +22,36 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession, timeout_secon
     Args:
         tool: The MCP tool to create an entrypoint for
         session: The session to use
-        timeout_seconds: Timeout in seconds for the tool call
+        timeout_seconds: Default timeout in seconds if not specified in kwargs
 
     Returns:
         Callable: The entrypoint function for the tool
     """
     from agno.agent import Agent
+    from datetime import timedelta
 
     async def call_tool(agent: Agent, tool_name: str, **kwargs) -> str:
         try:
             log_debug(f"Calling MCP Tool '{tool_name}' with args: {kwargs}")
+            
+            # Extract read_timeout_seconds from kwargs if present
+            read_timeout_seconds = kwargs.pop('read_timeout_seconds', None)
+            
+            # Determine the timeout to use
+            if read_timeout_seconds is not None:
+                if isinstance(read_timeout_seconds, timedelta):
+                    tool_timeout = read_timeout_seconds
+                else:
+                    tool_timeout = timedelta(seconds=int(read_timeout_seconds))
+            else:
+                tool_timeout = timedelta(seconds=timeout_seconds)
+            
+            log_debug(f"Using tool timeout: {tool_timeout}")
+            
             result: CallToolResult = await session.call_tool(
                 tool_name, 
                 kwargs, 
-                read_timeout_seconds=timedelta(seconds=timeout_seconds)
+                read_timeout_seconds=tool_timeout
             )
 
             # Return an error if the tool call failed
@@ -79,23 +95,40 @@ def get_sync_entrypoint_for_tool(tool: MCPTool, session: ClientSession, timeout_
     Args:
         tool: The MCP tool to create an entrypoint for
         session: The session to use
-        timeout_seconds: Timeout in seconds for the tool call
+        timeout_seconds: Default timeout in seconds if not specified in kwargs
 
     Returns:
         Callable: The synchronous entrypoint function for the tool
     """
     import asyncio
     from agno.agent import Agent
+    from datetime import timedelta
 
     def call_tool_sync(agent: Agent, tool_name: str, **kwargs) -> str:
         try:
             log_debug(f"Calling MCP Tool '{tool_name}' with args: {kwargs}")
-            log_debug(f"Using timeout: {timeout_seconds} seconds")
+            
+            # Extract read_timeout_seconds from kwargs if present
+            read_timeout_seconds = kwargs.pop('read_timeout_seconds', None)
+            
+            # Determine the timeout to use
+            if read_timeout_seconds is not None:
+                if isinstance(read_timeout_seconds, timedelta):
+                    tool_timeout_seconds = int(read_timeout_seconds.total_seconds())
+                else:
+                    tool_timeout_seconds = int(read_timeout_seconds)
+            else:
+                tool_timeout_seconds = timeout_seconds
+            
+            # Add a small buffer for async execution overhead
+            async_timeout_seconds = tool_timeout_seconds + 5
+            
+            log_debug(f"Using tool timeout: {tool_timeout_seconds}s, async timeout: {async_timeout_seconds}s")
             
             # Try to run the async call with better event loop handling
             result = _run_async_with_timeout(
-                _async_call_tool(session, tool_name, kwargs, agent, timeout_seconds),
-                timeout_seconds
+                _async_call_tool(session, tool_name, kwargs, agent, tool_timeout_seconds),
+                async_timeout_seconds
             )
             
             return result
@@ -179,7 +212,7 @@ async def _async_call_tool(session: ClientSession, tool_name: str, kwargs: dict,
     """Helper function to make the actual async MCP tool call."""
     from datetime import timedelta
     
-    # Call the tool with explicit timeout
+    # Call the tool with the specified timeout
     result: CallToolResult = await session.call_tool(
         tool_name, 
         kwargs, 
