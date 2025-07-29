@@ -1568,196 +1568,111 @@ class Model(ABC):
             results = await asyncio.gather(
                 *(self.arun_function_call(fc) for fc in function_calls_to_run), return_exceptions=True
             )
-            
-            # Process results
-            for result in results:
-                # If result is an exception, skip processing it
-                if isinstance(result, BaseException):
-                    log_error(f"Error during function call: {result}")
-                    raise result
-
-                # Unpack result
-                function_call_success, function_call_timer, fc = result
-
-                # Handle AgentRunException
-                if isinstance(function_call_success, AgentRunException):
-                    a_exc = function_call_success
-                    # Update additional messages from function call
-                    _handle_agent_exception(a_exc, additional_messages)
-                    # Set function call success to False if an exception occurred
-                    function_call_success = False
-
-                # Process function call output
-                function_call_output: str = ""
-                if isinstance(fc.result, (GeneratorType, collections.abc.Iterator)):
-                    for item in fc.result:
-                        # This function yields agent/team run events
-                        if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(
-                            item, tuple(get_args(TeamRunResponseEvent))
-                        ):
-                            # We only capture content events
-                            if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
-                                if item.content is not None and isinstance(item.content, BaseModel):
-                                    function_call_output += item.content.model_dump_json()
-                                else:
-                                    # Capture output
-                                    function_call_output += item.content or ""
-
-                                if fc.function.show_result:
-                                    yield ModelResponse(content=item.content)
-                                    continue
-
-                            # Yield the event itself to bubble it up
-                            yield item
-                        else:
-                            function_call_output += str(item)
-                            if fc.function.show_result:
-                                yield ModelResponse(content=str(item))
-                elif isinstance(fc.result, (AsyncGeneratorType, collections.abc.AsyncIterator)):
-                    async for item in fc.result:
-                        # This function yields agent/team run events
-                        if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(
-                            item, tuple(get_args(TeamRunResponseEvent))
-                        ):
-                            # We only capture content events
-                            if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
-                                if item.content is not None and isinstance(item.content, BaseModel):
-                                    function_call_output += item.content.model_dump_json()
-                                else:
-                                    # Capture output
-                                    function_call_output += item.content or ""
-
-                                if fc.function.show_result:
-                                    yield ModelResponse(content=item.content)
-                                    continue
-
-                            # Yield the event itself to bubble it up
-                            yield item
-                        else:
-                            function_call_output += str(item)
-                            if fc.function.show_result:
-                                yield ModelResponse(content=str(item))
-                else:
-                    function_call_output = str(fc.result)
-                    if fc.function.show_result:
-                        yield ModelResponse(content=function_call_output)
-
-                # Create and yield function call result
-                function_call_result = self.create_function_call_result(
-                    fc, success=function_call_success, output=function_call_output, timer=function_call_timer
-                )
-                yield ModelResponse(
-                    content=f"{fc.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
-                    tool_executions=[
-                        ToolExecution(
-                            tool_call_id=function_call_result.tool_call_id,
-                            tool_name=function_call_result.tool_name,
-                            tool_args=function_call_result.tool_args,
-                            tool_call_error=function_call_result.tool_call_error,
-                            result=str(function_call_result.content),
-                            stop_after_tool_call=function_call_result.stop_after_tool_call,
-                            metrics=function_call_result.metrics,
-                        )
-                    ],
-                    event=ModelResponseEvent.tool_call_completed.value,
-                )
-
-                # Add function call result to function call results
-                function_call_results.append(function_call_result)
         else:
             # Serial execution (one after another)
+            results = []
             for fc in function_calls_to_run:
                 try:
-                    function_call_success, function_call_timer, fc_result = await self.arun_function_call(fc)
-                    
-                    # Handle AgentRunException
-                    if isinstance(function_call_success, AgentRunException):
-                        a_exc = function_call_success
-                        # Update additional messages from function call
-                        _handle_agent_exception(a_exc, additional_messages)
-                        # Set function call success to False if an exception occurred
-                        function_call_success = False
-
-                    # Process function call output
-                    function_call_output: str = ""
-                    if isinstance(fc_result.result, (GeneratorType, collections.abc.Iterator)):
-                        for item in fc_result.result:
-                            # This function yields agent/team run events
-                            if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(
-                                item, tuple(get_args(TeamRunResponseEvent))
-                            ):
-                                # We only capture content events
-                                if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
-                                    if item.content is not None and isinstance(item.content, BaseModel):
-                                        function_call_output += item.content.model_dump_json()
-                                    else:
-                                        # Capture output
-                                        function_call_output += item.content or ""
-
-                                    if fc_result.function.show_result:
-                                        yield ModelResponse(content=item.content)
-                                        continue
-
-                                # Yield the event itself to bubble it up
-                                yield item
-                            else:
-                                function_call_output += str(item)
-                                if fc_result.function.show_result:
-                                    yield ModelResponse(content=str(item))
-                    elif isinstance(fc_result.result, (AsyncGeneratorType, collections.abc.AsyncIterator)):
-                        async for item in fc_result.result:
-                            # This function yields agent/team run events
-                            if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(
-                                item, tuple(get_args(TeamRunResponseEvent))
-                            ):
-                                # We only capture content events
-                                if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
-                                    if item.content is not None and isinstance(item.content, BaseModel):
-                                        function_call_output += item.content.model_dump_json()
-                                    else:
-                                        # Capture output
-                                        function_call_output += item.content or ""
-
-                                    if fc_result.function.show_result:
-                                        yield ModelResponse(content=item.content)
-                                        continue
-
-                                # Yield the event itself to bubble it up
-                                yield item
-                            else:
-                                function_call_output += str(item)
-                                if fc_result.function.show_result:
-                                    yield ModelResponse(content=str(item))
-                    else:
-                        function_call_output = str(fc_result.result)
-                        if fc_result.function.show_result:
-                            yield ModelResponse(content=function_call_output)
-
-                    # Create and yield function call result
-                    function_call_result = self.create_function_call_result(
-                        fc_result, success=function_call_success, output=function_call_output, timer=function_call_timer
-                    )
-                    yield ModelResponse(
-                        content=f"{fc_result.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
-                        tool_executions=[
-                            ToolExecution(
-                                tool_call_id=function_call_result.tool_call_id,
-                                tool_name=function_call_result.tool_name,
-                                tool_args=function_call_result.tool_args,
-                                tool_call_error=function_call_result.tool_call_error,
-                                result=str(function_call_result.content),
-                                stop_after_tool_call=function_call_result.stop_after_tool_call,
-                                metrics=function_call_result.metrics,
-                            )
-                        ],
-                        event=ModelResponseEvent.tool_call_completed.value,
-                    )
-
-                    # Add function call result to function call results
-                    function_call_results.append(function_call_result)
+                    result = await self.arun_function_call(fc)
+                    results.append(result)
                 except Exception as e:
-                    log_error(f"Error during function call: {e}")
-                    raise e
+                    results.append(e)
+
+        # Process results (same logic for both concurrent and serial execution)
+        for result in results:
+            # If result is an exception, skip processing it
+            if isinstance(result, BaseException):
+                log_error(f"Error during function call: {result}")
+                raise result
+
+            # Unpack result
+            function_call_success, function_call_timer, fc = result
+
+            # Handle AgentRunException
+            if isinstance(function_call_success, AgentRunException):
+                a_exc = function_call_success
+                # Update additional messages from function call
+                _handle_agent_exception(a_exc, additional_messages)
+                # Set function call success to False if an exception occurred
+                function_call_success = False
+
+            # Process function call output
+            function_call_output: str = ""
+            if isinstance(fc.result, (GeneratorType, collections.abc.Iterator)):
+                for item in fc.result:
+                    # This function yields agent/team run events
+                    if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(
+                        item, tuple(get_args(TeamRunResponseEvent))
+                    ):
+                        # We only capture content events
+                        if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
+                            if item.content is not None and isinstance(item.content, BaseModel):
+                                function_call_output += item.content.model_dump_json()
+                            else:
+                                # Capture output
+                                function_call_output += item.content or ""
+
+                            if fc.function.show_result:
+                                yield ModelResponse(content=item.content)
+                                continue
+
+                        # Yield the event itself to bubble it up
+                        yield item
+                    else:
+                        function_call_output += str(item)
+                        if fc.function.show_result:
+                            yield ModelResponse(content=str(item))
+            elif isinstance(fc.result, (AsyncGeneratorType, collections.abc.AsyncIterator)):
+                async for item in fc.result:
+                    # This function yields agent/team run events
+                    if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(
+                        item, tuple(get_args(TeamRunResponseEvent))
+                    ):
+                        # We only capture content events
+                        if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
+                            if item.content is not None and isinstance(item.content, BaseModel):
+                                function_call_output += item.content.model_dump_json()
+                            else:
+                                # Capture output
+                                function_call_output += item.content or ""
+
+                            if fc.function.show_result:
+                                yield ModelResponse(content=item.content)
+                                continue
+
+                        # Yield the event itself to bubble it up
+                        yield item
+                    else:
+                        function_call_output += str(item)
+                        if fc.function.show_result:
+                            yield ModelResponse(content=str(item))
+            else:
+                function_call_output = str(fc.result)
+                if fc.function.show_result:
+                    yield ModelResponse(content=function_call_output)
+
+            # Create and yield function call result
+            function_call_result = self.create_function_call_result(
+                fc, success=function_call_success, output=function_call_output, timer=function_call_timer
+            )
+            yield ModelResponse(
+                content=f"{fc.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
+                tool_executions=[
+                    ToolExecution(
+                        tool_call_id=function_call_result.tool_call_id,
+                        tool_name=function_call_result.tool_name,
+                        tool_args=function_call_result.tool_args,
+                        tool_call_error=function_call_result.tool_call_error,
+                        result=str(function_call_result.content),
+                        stop_after_tool_call=function_call_result.stop_after_tool_call,
+                        metrics=function_call_result.metrics,
+                    )
+                ],
+                event=ModelResponseEvent.tool_call_completed.value,
+            )
+
+            # Add function call result to function call results
+            function_call_results.append(function_call_result)
 
         # Add any additional messages at the end
         if additional_messages:
